@@ -49,5 +49,6 @@ pkgs.mkShell {
       rustup toolchain install stable >/dev/null
       rustup default stable >/dev/null
     fi
+    cd hnefatafl
   '';
 }
