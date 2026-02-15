@@ -16,6 +16,7 @@ DEFAULT_PORT = 49152
 DEFAULT_TIME = "rated fischer 900000 10 11"
 BOARD_SIZE = 11
 BOARD_LETTERS = "abcdefghijk"
+THRONE = (5, 5)
 RESTRICTED = {(0, 0), (10, 0), (0, 10), (10, 10), (5, 5)}  # corners + throne
 CORNERS = {(0, 0), (10, 0), (0, 10), (10, 10)}
 STARTING_POSITION_11X11 = [
@@ -140,7 +141,9 @@ class Board:
             if 0 <= bx < BOARD_SIZE and 0 <= by < BOARD_SIZE:
                 support_piece = self.piece_at(bx, by)
                 support_role = self.role_of(support_piece)
-                if support_role == role_from or (bx, by) in RESTRICTED:
+                throne_blocked_by_king = (bx, by) == THRONE and support_piece == "K"
+                restricted_hostile = (bx, by) in RESTRICTED and not throne_blocked_by_king
+                if support_role == role_from or restricted_hostile:
                     self.grid[ay][ax] = "."
 
     def _maybe_capture_king(self, role_from: str) -> None:
