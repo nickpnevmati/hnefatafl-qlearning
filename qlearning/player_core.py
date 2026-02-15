@@ -228,6 +228,7 @@ class Board:
         self.seen_positions = {self.position_key()}
 
     def record_position(self) -> None:
+        self._print_board()
         self.seen_positions.add(self.position_key())
 
     def _would_repeat_position(self, role: str, from_coord: str, to_coord: str) -> bool:
@@ -245,6 +246,12 @@ class Board:
 
         return sim_board.position_key() in self.seen_positions
 
+    def _print_board(self):
+        for row in self.grid:
+            print(
+                "".join("X" if c == "A" else "O" if c == "D" else c for c in row),
+                flush=True,
+            )
 
 def opposite(role: str) -> str:
     return "defender" if role == "attacker" else "attacker"
