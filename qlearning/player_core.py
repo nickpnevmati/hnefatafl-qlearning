@@ -9,7 +9,7 @@ import socket
 import sys
 import threading
 from dataclasses import dataclass
-from typing import List, Optional, TextIO, Tuple
+from typing import List, Optional, Set, TextIO, Tuple
 
 DEFAULT_VERSION_ID = "ad746a65"
 DEFAULT_PORT = 49152
@@ -54,12 +54,15 @@ class PlayerConfig:
 @dataclass
 class Board:
     grid: List[List[str]]
+    seen_positions: Set[str]
 
     def __init__(self) -> None:
         self.grid = [
             list(row.replace("X", "A").replace("O", "D").replace("K", "K"))
             for row in STARTING_POSITION_11X11
         ]
+        self.seen_positions = set()
+        self.begin_game_history()
 
     @staticmethod
     def coord_to_xy(coord: str) -> Tuple[int, int]:
@@ -188,6 +191,12 @@ class Board:
                 if self.role_of(piece) != role:
                     continue
                 moves.extend(self._moves_from(x, y, piece))
+        if role == "defender":
+            moves = [
+                move
+                for move in moves
+                if not self._would_repeat_position(role, move[0], move[1])
+            ]
         return moves
 
     def random_legal_move(self, role: str) -> Optional[Tuple[str, str]]:
@@ -211,6 +220,30 @@ class Board:
         if king_pos in CORNERS:
             return "defender"
         return None
+
+    def position_key(self) -> str:
+        return "".join("".join(row) for row in self.grid)
+
+    def begin_game_history(self) -> None:
+        self.seen_positions = {self.position_key()}
+
+    def record_position(self) -> None:
+        self.seen_positions.add(self.position_key())
+
+    def _would_repeat_position(self, role: str, from_coord: str, to_coord: str) -> bool:
+        if role != "defender":
+            return False
+        if not self.seen_positions:
+            return False
+
+        sim_board = Board()
+        sim_board.grid = [row[:] for row in self.grid]
+        sim_board.seen_positions = set()
+
+        if not sim_board.apply_move(role, from_coord, to_coord):
+            return True
+
+        return sim_board.position_key() in self.seen_positions
 
 
 def opposite(role: str) -> str:
@@ -403,7 +436,9 @@ class BasePlayer:
 
         from_coord, to_coord = move
         send_line(sock, f"game {game_id} play {self.config.role} {from_coord} {to_coord}")
-        board.apply_move(self.config.role, from_coord, to_coord)
+        moved = board.apply_move(self.config.role, from_coord, to_coord)
+        if moved:
+            board.record_position()
 
     def _play_active_game(self, sock: socket.socket, reader: TextIO, game_id: int, board: Board) -> None:
         while True:
@@ -424,6 +459,7 @@ class BasePlayer:
                     if tokens[4] != "resigns" and role_play != self.config.role:
                         moved = board.apply_move(role_play, tokens[4], tokens[5])
                         if moved:
+                            board.record_position()
                             self.on_opponent_move(
                                 board,
                                 role_play,
