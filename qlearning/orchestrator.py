@@ -41,7 +41,7 @@ def spawn_attacker(game_id: str):
             'python',
             'qlearning/random_player.py',
             '--username',
-            ' q-attacker',
+            'q-attacker',
             '--role',
             'attacker',
             '--join-game',

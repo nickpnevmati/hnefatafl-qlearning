@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
+from itertools import pairwise
 
 try:
     from qlearning.player_core import (
@@ -22,6 +23,9 @@ try:
         opposite,
         parse_common_args,
     )
+    from qlearning.utils import (
+        tuple_add,
+    )
 except ModuleNotFoundError:
     from player_core import (
         BOARD_SIZE,
@@ -31,6 +35,9 @@ except ModuleNotFoundError:
         build_player_config,
         opposite,
         parse_common_args,
+    )
+    from utils import (
+        tuple_add,
     )
 
 Action = Tuple[str, str]
@@ -187,6 +194,61 @@ class QLearningPlayer(BasePlayer):
         if self.config.role == "defender":
             return defender_progress
         return 1.0 - defender_progress
+    
+    def _king_threat(self, board: Board) -> float:
+        king_pos = self._king_position(board)
+        if king_pos is None:
+            return 0
+        score = 0
+        for pos in board.neighborhood(king_pos[0], king_pos[1], 1):
+            if board.piece_at(pos[0], pos[1]) == 'A' or pos in CORNERS:
+                distance = abs(pos[0] - king_pos[0]) + abs(pos[1] - king_pos[1])
+                score += 1.0 if distance == 1 else 0.25
+        return score / 5
+    
+    def _exit_fort(self, board: Board) -> float:
+        king_pos = self._king_position(board)
+        if king_pos is None:
+            return 0
+
+        if king_pos[0] != BOARD_SIZE - 1 and king_pos[0] != 0 and king_pos[1] != BOARD_SIZE - 1 and king_pos[1] != 0:
+            return 0
+        
+        kp_x = king_pos[0]
+        kp_y = king_pos[1]
+        score = 3 if len(board._moves_from(kp_x, kp_y, 'K')) > 0 else 0
+
+        for position in board.neighborhood(kp_x, kp_y, 2):
+            p_x = position[0]
+            p_y = position[1]
+            if board.piece_at(p_x, p_y) == 'D':
+                score += 0.5 if self._can_be_captured(p_x, p_y, board) else 1
+        return score / 17
+    
+    def _can_be_captured(self, p_x: int, p_y: int, board: Board) -> bool:
+        piece = board.piece_at(p_x, p_y)
+        if piece != 'A' and piece != 'D':
+            return False
+        
+        role = board.role_of(piece)
+
+        sides = [
+            (0,  1),
+            (1,  0),
+            (0, -1),
+            (-1, 0),
+            (0,  1)
+        ]
+
+        positions = list(tuple_add(i, (p_x, p_y)) for i in sides)
+
+        for pair in pairwise(positions):
+            d1, d2 = pair
+            p1 = board.piece_at(d1[0], d1[1])
+            p2 = board.piece_at(d2[0], d2[1])
+            if (board.role_of(p1) == role or p1 == 'E') and (board.role_of(p2) == role or p2 == 'E'):
+                return False
+        return True
 
     def _snapshot(self, board: Board) -> PieceSnapshot:
         counts = board.piece_counts()
@@ -265,11 +327,11 @@ class QLearningPlayer(BasePlayer):
             float(own_mobility) / MOBILITY_NORM,
             float(opp_mobility) / MOBILITY_NORM,
             float(before_opp - after_opp) / float(self.max_opp_pieces),
-            float(before_own - after_own) / float(self.max_own_pieces),
-            self._king_progress(board_after),
-            1.0 if winner == self.config.role else 0.0,
-            1.0 if winner == opposite(self.config.role) else 0.0,
             move_distance / float(BOARD_SIZE - 1),
+            self._king_progress(board_after),
+            self._king_threat(board_after),
+            self._exit_fort(board_after),
+            1.0 if winner == self.config.role else 0.0,
         ]
 
     @staticmethod

@@ -59,7 +59,7 @@ class Board:
 
     def __init__(self) -> None:
         self.grid = [
-            list(row.replace("X", "A").replace("O", "D").replace("K", "K"))
+            list(row.replace("X", "A").replace("O", "D"))
             for row in STARTING_POSITION_11X11
         ]
         self.seen_positions = set()
@@ -78,6 +78,8 @@ class Board:
         return f"{BOARD_LETTERS[x]}{BOARD_SIZE - y}"
 
     def piece_at(self, x: int, y: int) -> str:
+        if x >= BOARD_SIZE or x < 0 or y >= BOARD_SIZE or y < 0:
+            return 'E' # Edge
         return self.grid[y][x]
 
     @staticmethod
@@ -185,6 +187,22 @@ class Board:
                 nx += dx
                 ny += dy
         return moves
+    
+    def position_outside_bounds(self, x: int, y: int) -> bool:
+        return x < 0 or x >= BOARD_SIZE or y < 0 or y >= BOARD_SIZE
+    
+    def neighborhood(self, x: int, y: int, size: int) -> list[tuple[int, int]]:
+        cells: list[tuple[int, int]] = []
+        for dx in range(-size, size + 1):
+            for dy in range(-size, size + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                c_x = x + dx
+                c_y = y + dy
+                if self.position_outside_bounds(c_x, c_y):
+                    continue
+                cells.append((c_x, c_y))
+        return cells
 
     def legal_moves(self, role: str) -> List[Tuple[str, str]]:
         moves: List[Tuple[str, str]] = []
@@ -249,7 +267,11 @@ class Board:
         return sim_board.position_key() in self.seen_positions
 
 def opposite(role: str) -> str:
-    return "defender" if role == "attacker" else "attacker"
+    if role in ('attacker', 'defender'):
+        return "defender" if role == "attacker" else "attacker"
+    if role in ('A', 'D'):
+        return 'D' if role == 'A' else 'A'
+    return None
 
 
 def send_line(sock: socket.socket, message: str) -> None:
