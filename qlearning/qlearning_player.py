@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import random
 import sys
@@ -45,12 +46,19 @@ CORNERS = (
     (BOARD_SIZE - 1, 0),
     (BOARD_SIZE - 1, BOARD_SIZE - 1),
 )
+SHAPING_BETA = 0.25
+SHAPING_CLIP = 0.05
+POTENTIAL_MATERIAL_WEIGHT = 0.45
+POTENTIAL_MOBILITY_WEIGHT = 0.35
+POTENTIAL_KING_WEIGHT = 0.20
 
 
 @dataclass
 class PieceSnapshot:
     own_pieces: int
     opp_pieces: int
+    own_mobility: int
+    opp_mobility: int
     king_progress: float
 
 
@@ -59,7 +67,10 @@ class QLearningPlayer(BasePlayer):
         self,
         config: PlayerConfig,
         qtable_path: Path,
+        learning_log_path: Path,
         alpha: float,
+        alpha_min: float,
+        alpha_decay: float,
         gamma: float,
         epsilon: float,
         epsilon_min: float,
@@ -68,7 +79,10 @@ class QLearningPlayer(BasePlayer):
     ) -> None:
         super().__init__(config)
         self.qtable_path = qtable_path
+        self.learning_log_path = learning_log_path
         self.alpha = alpha
+        self.alpha_min = alpha_min
+        self.alpha_decay = alpha_decay
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -87,6 +101,11 @@ class QLearningPlayer(BasePlayer):
         self._pending_action: Optional[Action] = None
         self._pending_features: Optional[List[float]] = None
         self._pending_snapshot: Optional[PieceSnapshot] = None
+        self._updates_in_game = 0
+        self._sum_abs_td_error = 0.0
+        self._sum_abs_delta_w = 0.0
+        self._sum_shaped_reward = 0.0
+        self._sum_terminal_reward = 0.0
 
     def _load_weights(self) -> List[float]:
         if not self.qtable_path.exists():
@@ -174,14 +193,35 @@ class QLearningPlayer(BasePlayer):
         return PieceSnapshot(
             own_pieces=self._pieces_for_role(counts, self.config.role),
             opp_pieces=self._pieces_for_role(counts, opposite(self.config.role)),
+            own_mobility=len(board.legal_moves(self.config.role)),
+            opp_mobility=len(board.legal_moves(opposite(self.config.role))),
             king_progress=self._king_progress(board),
         )
 
+    @staticmethod
+    def _clamp(value: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, value))
+
+    def _potential(self, snapshot: PieceSnapshot) -> float:
+        material_term = (
+            float(snapshot.own_pieces) / float(self.max_own_pieces)
+            - float(snapshot.opp_pieces) / float(self.max_opp_pieces)
+        )
+        mobility_term = float(snapshot.own_mobility - snapshot.opp_mobility) / MOBILITY_NORM
+        king_term = (2.0 * snapshot.king_progress) - 1.0
+
+        potential = (
+            POTENTIAL_MATERIAL_WEIGHT * material_term
+            + POTENTIAL_MOBILITY_WEIGHT * mobility_term
+            + POTENTIAL_KING_WEIGHT * king_term
+        )
+        return self._clamp(potential, -1.0, 1.0)
+
     def _shaped_reward(self, before: PieceSnapshot, after: PieceSnapshot) -> float:
-        captures = before.opp_pieces - after.opp_pieces
-        losses = before.own_pieces - after.own_pieces
-        progress_gain = after.king_progress - before.king_progress
-        return 0.2 * float(captures - losses) + 0.1 * progress_gain
+        # Potential-based shaping preserves optimal policies while densifying feedback.
+        delta = (self.gamma * self._potential(after)) - self._potential(before)
+        shaping = SHAPING_BETA * delta
+        return self._clamp(shaping, -SHAPING_CLIP, SHAPING_CLIP)
 
     def _terminal_reward(self, winner: Optional[str]) -> float:
         if winner == self.config.role:
@@ -251,6 +291,47 @@ class QLearningPlayer(BasePlayer):
         self._pending_features = None
         self._pending_snapshot = None
 
+    def _reset_game_training_stats(self) -> None:
+        self._updates_in_game = 0
+        self._sum_abs_td_error = 0.0
+        self._sum_abs_delta_w = 0.0
+        self._sum_shaped_reward = 0.0
+        self._sum_terminal_reward = 0.0
+
+    def _append_learning_metrics(
+        self,
+        game_id: int,
+        winner: Optional[str],
+        weight_norm: float,
+        avg_abs_td_error: float,
+        avg_abs_delta_w: float,
+    ) -> None:
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "game_id": game_id,
+            "role": self.config.role,
+            "winner": winner,
+            "alpha": self.alpha,
+            "epsilon": self.epsilon,
+            "updates": self._updates_in_game,
+            "avg_abs_td_error": avg_abs_td_error,
+            "avg_abs_delta_w": avg_abs_delta_w,
+            "sum_shaped_reward": self._sum_shaped_reward,
+            "sum_terminal_reward": self._sum_terminal_reward,
+            "weight_l1_norm": weight_norm,
+        }
+
+        try:
+            self.learning_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.learning_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, sort_keys=True))
+                handle.write("\n")
+        except OSError as exc:
+            print(
+                f"[warn] failed to append learning metrics to {self.learning_log_path}: {exc}",
+                flush=True,
+            )
+
     def _update_pending(self, board: Board, winner: Optional[str]) -> None:
         if not self.train:
             return
@@ -260,8 +341,11 @@ class QLearningPlayer(BasePlayer):
             return
 
         next_snapshot = self._snapshot(board)
-        reward = self._shaped_reward(self._pending_snapshot, next_snapshot)
-        reward += self._terminal_reward(winner)
+        shaped_reward = self._shaped_reward(self._pending_snapshot, next_snapshot)
+        terminal_reward = self._terminal_reward(winner)
+        reward = shaped_reward + terminal_reward
+        self._sum_shaped_reward += shaped_reward
+        self._sum_terminal_reward += terminal_reward
 
         future_q = 0.0 if winner is not None else self._max_future_q(board)
 
@@ -269,8 +353,16 @@ class QLearningPlayer(BasePlayer):
         td_target = reward + self.gamma * future_q
         td_error = td_target - current_q
 
+        update_scale = self.alpha * td_error
+        delta_w_l1 = 0.0
         for idx in range(FEATURE_COUNT):
-            self.weights[idx] += self.alpha * td_error * self._pending_features[idx]
+            delta = update_scale * self._pending_features[idx]
+            self.weights[idx] += delta
+            delta_w_l1 += abs(delta)
+
+        self._updates_in_game += 1
+        self._sum_abs_td_error += abs(td_error)
+        self._sum_abs_delta_w += delta_w_l1
 
         if winner is not None:
             self._clear_pending()
@@ -313,6 +405,7 @@ class QLearningPlayer(BasePlayer):
     def on_game_started(self, game_id: int, board: Board) -> None:
         del game_id, board
         self._clear_pending()
+        self._reset_game_training_stats()
 
     def on_game_finished(
         self,
@@ -321,18 +414,28 @@ class QLearningPlayer(BasePlayer):
         winner: Optional[str],
         game_over_tokens: list[str],
     ) -> None:
-        del game_id, game_over_tokens
+        del game_over_tokens
 
         if self.train:
             self._update_pending(board, winner=winner)
             self._clear_pending()
+            self.alpha = max(self.alpha_min, self.alpha * self.alpha_decay)
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
         self.save_q_table()
         weight_norm = sum(abs(weight) for weight in self.weights)
-        print(
-            f"[info] linear-q features={FEATURE_COUNT} |w|_1={weight_norm:.5f} epsilon={self.epsilon:.5f}",
-            flush=True,
+        if self._updates_in_game > 0:
+            avg_abs_td_error = self._sum_abs_td_error / float(self._updates_in_game)
+            avg_abs_delta_w = self._sum_abs_delta_w / float(self._updates_in_game)
+        else:
+            avg_abs_td_error = 0.0
+            avg_abs_delta_w = 0.0
+        self._append_learning_metrics(
+            game_id=game_id,
+            winner=winner,
+            weight_norm=weight_norm,
+            avg_abs_td_error=avg_abs_td_error,
+            avg_abs_delta_w=avg_abs_delta_w,
         )
 
 
@@ -349,13 +452,45 @@ def parse_args() -> argparse.Namespace:
         dest="qtable_path",
         help="alias for --qtable-path",
     )
-    parser.add_argument("--alpha", type=float, default=0.02, help="Q-learning alpha")
-    parser.add_argument("--gamma", type=float, default=0.95, help="discount factor")
-    parser.add_argument("--epsilon", type=float, default=0.2, help="epsilon-greedy exploration")
+    parser.add_argument(
+        "--learning-log-path",
+        default="qlearning/learning_metrics.jsonl",
+        help="path to append per-game learning metrics as JSON lines",
+    )
+    parser.add_argument(
+        "--alpha", 
+        type=float, 
+        default=0.02, 
+        help="Q-learning alpha"
+    )
+    parser.add_argument(
+        "--alpha-min",
+        type=float,
+        default=0.002,
+        help="lower bound for alpha during decay",
+    )
+    parser.add_argument(
+        "--alpha-decay",
+        type=float,
+        default=0.9997,
+        help="multiplicative alpha decay applied at each game end",
+    )
+    parser.add_argument(
+        "--gamma", 
+        type=float, 
+        default=0.95, 
+        help="discount factor"
+    )
+    parser.add_argument(
+        "--epsilon", 
+        type=float, 
+        default=0.2, 
+        help="epsilon-greedy exploration"
+    )
     parser.add_argument(
         "--epsilon-min",
         type=float,
-        default=0.02,
+        default=0.05,
         help="lower bound for epsilon during decay",
     )
     parser.add_argument(
@@ -377,7 +512,10 @@ def main() -> int:
     player = QLearningPlayer(
         config=build_player_config(args),
         qtable_path=Path(args.qtable_path),
+        learning_log_path=Path(args.learning_log_path),
         alpha=args.alpha,
+        alpha_min=args.alpha_min,
+        alpha_decay=args.alpha_decay,
         gamma=args.gamma,
         epsilon=args.epsilon,
         epsilon_min=args.epsilon_min,
