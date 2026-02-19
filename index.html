@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Hnefatafl Q-learning</title>
+    <style>
+        :root {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+            line-height: 1.4
+        }
+
+        html {
+            min-height: 100%;
+            background-image: url("king.svg");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            background-repeat: no-repeat
+        }
+
+        body {
+            max-width: 880px;
+            margin: 48px auto;
+            padding: 30px 50px;
+            border-radius: 50px;
+            background-color: rgba(255, 255, 255, 0.9);
+        }
+
+        header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 24px
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.6rem
+        }
+
+        p.lead {
+            color: #333;
+            margin-top: 8px
+        }
+
+        .resources {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 18px
+        }
+
+        a.btn {
+            display: inline-block;
+            padding: 5px 15px;
+            background: #256dc0;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px
+        }
+
+        small.status {
+            margin-left: 10px;
+            color: #666
+        }
+
+        footer {
+            margin-top: 36px;
+            font-size: 0.9rem;
+            color: #555
+        }
+
+        code {
+            background: #f6f8fa;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.95em
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Technical University of Crete</h1>
+        <h3>COMP412 (2025-2026)</h3>
+        <h1>Hnefatafl Q-learning</h1>
+        <p>Author: Nick Pnevmatikatos</p>
+        <p class="lead">A project that applies Q-learning to Hnefatafl (a historical board game) to train agents and evaluate learned strategies.</p>
+    </header>
+
+    <section>
+        <h2>Overview</h2>
+        <p>
+            This repository contains the implementation, experiments, and visualisations for an RL agent trained with
+            Q-learning to play Copenhagen Hnefatafl. The core goals:
+        </p>
+        <ul>
+            <li>Implement game mechanics and state representation.</li>
+            <li>Train agents via Q-learning and evaluate performance.</li>
+            <li>Document results and present findings.</li>
+        </ul>
+
+        <div class="resources" aria-live="polite">
+            <div>
+                <a id="report-link" class="btn" href="report.pdf" target="_blank" rel="noopener">Report (PDF)</a>
+                <a id="pres-link" class="btn" href="presentation.pdf" target="_blank" rel="noopener">Presentation (PDF)</a>
+            </div>            
+
+            <div>
+                <label>Source Code:</label>
+                <a id="src-link" class="btn" href="" target="_blank" rel="noopener">Zip</a>
+                <a id="src-link" class="btn" href="https://github.com/nickpnevmati/hnefatafl-qlearning" target="_blank" rel="noopener">Github</a>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>Special thanks to dcampbell24 for the original implementation of the <a href="https://github.com/dcampbell24/hnefatafl" target="_blank">Hnefatafl engine</a> used in this project</p>
+    </footer>
+
+    <script>
+    </script>
+</body>
+
+</html>
